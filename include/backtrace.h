@@ -187,6 +187,16 @@ char** backtrace_symbols(void **buffer, int size);
 bool backtrace_symbols_cb(void **buffer, int size, uint32_t flags,
     void (*cb)(void *, backtrace_frame_t*), void *cb_arg);
 
+struct custom_module {
+    uint32_t symt_rom;
+    uint32_t addrtable_base;
+};
+
+typedef bool (*custom_module_callback)(void *addr, struct custom_module *mod);
+
+void register_custom_module_callback(custom_module_callback cb);
+void unregister_custom_module_callback(custom_module_callback cb);
+
 #ifdef __cplusplus
 }
 #endif
