@@ -183,6 +183,49 @@ static bool is_main_exe_text_address(uint32_t addr)
     return addr >= (uint32_t)__text_start && addr < (uint32_t)__text_end;
 }
 
+struct custom_module_callback_entry {
+    custom_module_callback cb;
+    struct custom_module_callback_entry *next;
+};
+struct custom_module_callback_entry *custom_module_callbacks;
+
+void register_custom_module_callback(custom_module_callback cb) {
+    struct custom_module_callback_entry *new_entry = malloc(sizeof(struct custom_module_callback_entry));
+    new_entry->cb = cb;
+    new_entry->next = custom_module_callbacks;
+    custom_module_callbacks = new_entry;
+}
+
+void unregister_custom_module_callback(custom_module_callback cb) {
+    struct custom_module_callback_entry *prev = NULL;
+    struct custom_module_callback_entry *iter = custom_module_callbacks;
+    while (iter != NULL) {
+        if (iter->cb == cb) {
+            if (prev == NULL) {
+                custom_module_callbacks = iter->next;
+            } else {
+                prev->next = iter->next;
+            }
+            free(iter);
+            return;
+        }
+        prev = iter;
+        iter = iter->next;
+    }
+    assertf(false, "callback not registered");
+}
+
+static bool lookup_custom_module(void *ram, struct custom_module *mod) {
+    struct custom_module_callback_entry *iter = custom_module_callbacks;
+    while (iter != NULL) {
+        if (iter->cb(ram, mod)) {
+            return true;
+        }
+        iter = iter->next;
+    }
+    return false;
+}
+
 /** 
  * @brief Open the SYMT symbol table in the rompak.
  * 
@@ -209,8 +252,14 @@ static symtable_header_t symt_open(void *addr) {
 			SYMT_ROM = module->sym_romofs;
 			addrtable_base = (uint32_t)module->prog_base;
 		} else {
-			SYMT_ROM = 0;
-			addrtable_base = 0;
+            struct custom_module custom_module = {0};
+            if (lookup_custom_module(addr, &custom_module)) {
+                SYMT_ROM = custom_module.symt_rom;
+                addrtable_base = custom_module.addrtable_base;
+            } else {
+                SYMT_ROM = 0;
+                addrtable_base = 0;
+            }
 		}
 	}
     
