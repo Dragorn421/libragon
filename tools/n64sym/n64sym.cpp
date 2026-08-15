@@ -442,7 +442,7 @@ bool elf_find_callsites(const char *elf)
 
     // Start objdump to parse the disassembly of the ELF file
     char *cmd = NULL;
-    asprintf(&cmd, "%sobjdump -d %s", gccprefix_triplet, elf);
+    asprintf(&cmd, "%sobjdump -d --stop-address=0x80800000 %s", gccprefix_triplet, elf);
     verbose(1, "Running: %s\n", cmd);
     FILE *disasm = popen(cmd, "r");
     if (!disasm) {
