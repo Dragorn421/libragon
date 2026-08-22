@@ -54,9 +54,10 @@ _start:
 
 	jal __do_global_ctors		/* call global constructors */
 	nop
-	li a0, 0
+	lw a0, envargs_argc
+	lw a1, envargs_argv
 	jal main					/* call main app */
-	li a1, 0
+	nop
 
 _abort:
 	xioctl_exit				/* request the emulator to exit */

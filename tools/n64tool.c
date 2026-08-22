@@ -20,7 +20,9 @@
 	Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
 */
 
+#include <stddef.h>
 #define _GNU_SOURCE
+#include <assert.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -34,6 +36,8 @@
 
 // Default header to use if none is specified
 #include "ipl3.h"
+
+#include "../src/chunks/chunks_defs.h"
 
 #define ROUND_UP(n, d) ({ \
 	typeof(n) _n = n; typeof(d) _d = d; \
@@ -67,10 +71,14 @@ int pad_align = 16384;
 
 #define WRITE_SIZE   (1024 * 1024)
 
+#define CHECK_CODE_2_OFFSET 0x14
+
 #define TITLE_OFFSET 0x20
 #define TITLE_SIZE   20
 
+#define FLAGS_OFFSET 0x38
 #define CATEGORY_OFFSET 0x3B
+#define GAME_ID_OFFSET 0x3C
 #define REGION_OFFSET 0x3E
 
 #define IQUE_ENTRYPOINT_OFFSET 0x8
@@ -143,6 +151,7 @@ int print_usage(const char * prog_name)
 	fprintf(stderr, "File flags (to be used before each file):\n");
 	fprintf(stderr, "\t-a, --align <align>    Next file is aligned at <align> bytes from top of memory (default: 16).\n");
 	fprintf(stderr, "\t-s, --offset <offset>  Next file starts at <offset> from top of memory. Offset must be 4-byte aligned.\n");
+	fprintf(stderr, "\t-c, --chunk <name>     Next file will also be referenced as a chunk under the name <name>.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Binary byte size/offset suffix notation:\n");
 	fprintf(stderr, "\tB for bytes.\n");
@@ -358,6 +367,11 @@ int main(int argc, char *argv[])
 	size_t toc_offset = 0;
 	int header_size = 0;
 	int align_next = 16;
+	bool next_is_chunk = false;
+	const char * next_chunk_name = NULL;
+	size_t n_chunks = 0;
+	size_t chunks_buf_size = 0;
+	struct chunk_header * chunks_buf = NULL;
 
 	char category = 'N';
 	// Some flashcarts (at least Everdrive X7) seem to automatically set the TV type based on the region field.
@@ -614,6 +628,26 @@ int main(int argc, char *argv[])
 			region = region_arg[0];
 			continue;
 		}
+		if(check_flag(arg, "-c", "--chunk"))
+		{
+			if(i >= argc)
+			{
+				/* Expected another argument */
+				fprintf(stderr, "ERROR: Expected an argument to chunk flag\n\n");
+				return print_usage(argv[0]);
+			}
+
+			const char * name_arg = argv[i++];
+			if (strlen(name_arg) > 4)
+			{
+				fprintf(stderr, "ERROR: chunk name must be at most 4 characters\n\n");
+				return print_usage(argv[0]);
+			}
+
+			next_is_chunk = true;
+			next_chunk_name = name_arg;
+			continue;
+		}
 
 		/* Argument is not a flag; treat it as an input file */
 
@@ -712,6 +746,25 @@ int main(int argc, char *argv[])
 			return STATUS_ERROR;
 		}
 
+		if (next_is_chunk)
+		{
+			assert(next_chunk_name != NULL);
+
+			if (n_chunks + 1 > chunks_buf_size) {
+				chunks_buf_size = chunks_buf_size == 0 ? 8 : chunks_buf_size * 2;
+				chunks_buf = realloc(chunks_buf, chunks_buf_size * sizeof(struct chunk_header));
+			}
+			struct chunk_header * chunk_header = &chunks_buf[n_chunks];
+			n_chunks++;
+
+			memset(chunk_header->name, 0, sizeof(chunk_header->name));
+			memcpy(chunk_header->name, next_chunk_name, strlen(next_chunk_name));
+			chunk_header->data = offset;
+
+			next_is_chunk = false;
+			next_chunk_name = NULL;
+		}
+
 		if (toc.num_entries < TOC_MAX_ENTRIES)
 		{
 			/* Add the file to the toc */
@@ -737,6 +790,59 @@ int main(int argc, char *argv[])
 
 		/* Keep track to be sure we align properly when they request a memory alignment */
 		total_bytes_written += bytes_copied;
+	}
+
+	uint32_t chunks_header_offset = 0;
+
+	if (n_chunks != 0) {
+		/* Write chunks header */
+
+		if (total_bytes_written % 16 != 0)
+		{
+			ssize_t num_zeros = 16 - (total_bytes_written % 16);
+			output_zeros(write_file, num_zeros);
+			total_bytes_written += num_zeros;
+		}
+
+		chunks_header_offset = ftell(write_file);
+
+		size_t chunks_header_sz = sizeof(struct chunks_header) + n_chunks * sizeof(struct chunk_header);
+		struct chunks_header * chunks_header = malloc(chunks_header_sz);
+
+		chunks_header->version = SWAPLONG(0);
+		chunks_header->n_chunks = SWAPLONG(n_chunks);
+		memcpy(chunks_header->chunks, chunks_buf, n_chunks * sizeof(struct chunk_header));
+		free(chunks_buf);
+
+		for (size_t i = 0; i < n_chunks; i++)
+		{
+			chunks_header->chunks[i].data = SWAPLONG(chunks_header->chunks[i].data);
+		}
+
+		fwrite(chunks_header, chunks_header_sz, 1, write_file);
+		total_bytes_written += chunks_header_sz;
+
+		/* Update the TOC cookie with file contents. */
+		toc_cookie = crc32_update(toc_cookie, (unsigned char*)chunks_header, chunks_header_sz);
+
+		free(chunks_header);
+
+		if (toc.num_entries < TOC_MAX_ENTRIES)
+		{
+			/* Add the file to the toc */
+			toc.files[toc.num_entries].offset = chunks_header_offset;
+			toc.files[toc.num_entries].size = chunks_header_sz;
+			strcpy(toc.files[toc.num_entries].name, "chunks_header");
+			toc.num_entries++;
+		}
+		else
+		{
+			if (create_toc)
+			{
+				fprintf(stderr, "ERROR: Too many files to add to table.\n");
+				return STATUS_ERROR;
+			}
+		}
 	}
 
 	if(!total_bytes_written)
@@ -794,6 +900,28 @@ int main(int argc, char *argv[])
 	/* Set region in header */
 	fseek(write_file, REGION_OFFSET, SEEK_SET);
 	fwrite(&region, 1, 1, write_file);
+
+	if (chunks_header_offset != 0) {
+		if (header != NULL) {
+			fprintf(stderr, "ERROR: Cannot add chunks to the ROM with a custom header.\n");
+			return STATUS_ERROR;
+		}
+
+		uint32_t chunks_header_offset_be = SWAPLONG(chunks_header_offset);
+
+		fseek(write_file, CHECK_CODE_2_OFFSET, SEEK_SET);
+		fwrite(&chunks_header_offset_be, 4, 1, write_file);
+
+		uint8_t flags = 2;
+
+		fseek(write_file, FLAGS_OFFSET, SEEK_SET);
+		fwrite(&flags, 1, 1, write_file);
+
+		char ed_game_id[2] = {'E', 'D'};
+
+		fseek(write_file, GAME_ID_OFFSET, SEEK_SET);
+		fwrite(ed_game_id, 2, 1, write_file);
+	}
 
 	/* If we are using libdragon's IPL3, set the entrypoint in the header
 	   for iQue to match the first valid loadpoint found in the ELF. This make

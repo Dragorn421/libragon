@@ -118,6 +118,10 @@ endif
 # Add *.version files to the rompak
 N64_TOOLFILES = $(wildcard $(N64_INCLUDEDIR)/*.version)
 
+N64_TOOLCHUNKS = \
+    --chunk ENV $(N64_INCLUDEDIR)/chunks/env.bin \
+    --chunk ARGS $(N64_INCLUDEDIR)/chunks/args.bin
+
 ifeq ($(D),1)
 CFLAGS+=-g3
 CXXFLAGS+=-g3
@@ -154,7 +158,8 @@ RSPASFLAGS+=-MMD
 		$<.sym \
 		$(filter %.dfs, $^) \
 		$(filter %.msym, $^) \
-		$(N64_TOOLFILES)
+		$(N64_TOOLFILES) \
+		$(N64_TOOLCHUNKS)
 	if [ ! -z "$(strip $(N64_ED64ROMCONFIGFLAGS))" ]; then \
 		$(N64_ED64ROMCONFIG) $(N64_ED64ROMCONFIGFLAGS) $(BUILD_DIR)/$@.tmp; \
 	fi

@@ -9,6 +9,7 @@ EXAMPLES += ctest
 EXAMPLES += customfont
 #EXAMPLES += dfsdemo # Disabled for now because it requires libmikmod
 EXAMPLES += eepromfstest
+EXAMPLES += envargs
 EXAMPLES += fontdemo
 EXAMPLES += fontgallery
 EXAMPLES += gldemo

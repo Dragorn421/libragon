@@ -29,6 +29,7 @@ libdragon: ASFLAGS+=$(N64_ASFLAGS) $(LIBDRAGON_CFLAGS)
 libdragon: RSPASFLAGS+=$(N64_RSPASFLAGS) $(LIBDRAGON_CFLAGS)
 libdragon: LDFLAGS+=$(N64_LDFLAGS)
 libdragon: libdragon.a libdragonsys.a gen-version
+libdragon: $(BUILD_DIR)/chunks/env.bin $(BUILD_DIR)/chunks/args.bin
 
 libdragonsys.a: $(BUILD_DIR)/system.o
 
@@ -91,7 +92,9 @@ LIBDRAGON_OBJS += \
 	$(BUILD_DIR)/flashram.o \
 	$(BUILD_DIR)/ucontext.o \
 	$(BUILD_DIR)/ucontext_asm.o \
-	$(BUILD_DIR)/coroutine.o
+	$(BUILD_DIR)/coroutine.o \
+	$(BUILD_DIR)/chunks/chunks.o \
+	$(BUILD_DIR)/chunks/envargs_read.o
 
 include $(SOURCE_DIR)/kernel/libdragon.mk
 include $(SOURCE_DIR)/audio/libdragon.mk
@@ -120,6 +123,10 @@ libdragon.a: $(LIBDRAGON_OBJS)
 	@echo "    [AR] $@"
 	rm -f $@
 	$(N64_AR) -rcs -o $@ $^
+
+$(BUILD_DIR)/chunks/%.bin: $(BUILD_DIR)/chunks/%.o
+	@echo "    [OBJCOPY] $@"
+	$(N64_OBJCOPY) -O binary -j chunk_data $< $@
 
 examples:
 	$(MAKE) -C examples
@@ -198,6 +205,11 @@ install: install-mk libdragon
 	else \
 		rm -f $(INSTALLDIR)/$(N64_TARGET)/include/libdragon.version; \
 	fi;
+	mkdir -p $(INSTALLDIR)/$(N64_TARGET)/include/chunks
+	@echo "    [INSTALL] env.bin"
+	install -Cv -m 0644 $(BUILD_DIR)/chunks/env.bin $(INSTALLDIR)/$(N64_TARGET)/include/chunks/
+	@echo "    [INSTALL] args.bin"
+	install -Cv -m 0644 $(BUILD_DIR)/chunks/args.bin $(INSTALLDIR)/$(N64_TARGET)/include/chunks/
 	@echo "    [INSTALL] include/*.h"
 	install -Cv -m 0644 include/*.h $(INSTALLDIR)/$(N64_TARGET)/include/
 	install -Cv -m 0644 include/*.inc $(INSTALLDIR)/$(N64_TARGET)/include/
